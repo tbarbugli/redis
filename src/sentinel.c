@@ -134,6 +134,7 @@ typedef struct sentinelRedisInstance {
     int flags;      /* See SRI_... defines */
     char *name;     /* Master name from the point of view of this sentinel. */
     char *runid;    /* run ID of this instance. */
+    char *unresolved_hostname; /* the unresolved hostname */
     sentinelAddr *addr; /* Master host. */
     redisAsyncContext *cc; /* Hiredis context for commands. */
     redisAsyncContext *pc; /* Hiredis context for Pub / Sub. */
@@ -859,6 +860,7 @@ sentinelRedisInstance *createSentinelRedisInstance(char *name, int flags, char *
     ri->flags = flags | SRI_DISCONNECTED;
     ri->name = sdsname;
     ri->runid = NULL;
+    ri->unresolved_hostname = sdsnew(hostname);
     ri->addr = addr;
     ri->cc = NULL;
     ri->pc = NULL;
@@ -1098,28 +1100,6 @@ void sentinelResetMaster(sentinelRedisInstance *ri, int flags) {
         sentinelEvent(REDIS_WARNING,"+reset-master",ri,"%@");
 }
 
-/* Call sentinelResetMaster() on every master with a name matching the specified
- * pattern. */
-int sentinelResetMastersByPattern(char *pattern, int flags) {
-    dictIterator *di;
-    dictEntry *de;
-    int reset = 0;
-
-    di = dictGetIterator(sentinel.masters);
-    while((de = dictNext(di)) != NULL) {
-        sentinelRedisInstance *ri = dictGetVal(de);
-
-        if (ri->name) {
-            if (stringmatch(pattern,ri->name,0)) {
-                sentinelResetMaster(ri,flags);
-                reset++;
-            }
-        }
-    }
-    dictReleaseIterator(di);
-    return reset;
-}
-
 /* Reset the specified master with sentinelResetMaster(), and also change
  * the ip:port address, but take the name of the instance unmodified.
  *
@@ -1144,6 +1124,28 @@ int sentinelResetMasterAndChangeAddress(sentinelRedisInstance *master, char *ip,
      * gets the master->addr->ip and master->addr->port as arguments. */
     releaseSentinelAddr(oldaddr);
     return REDIS_OK;
+}
+
+/* Call sentinelResetMaster() on every master with a name matching the specified
+ * pattern. */
+int sentinelResetMastersByPattern(char *pattern, int flags) {
+    dictIterator *di;
+    dictEntry *de;
+    int reset = 0;
+
+    di = dictGetIterator(sentinel.masters);
+    while((de = dictNext(di)) != NULL) {
+        sentinelRedisInstance *ri = dictGetVal(de);
+
+        if (ri->name) {
+            if (stringmatch(pattern,ri->name,0)) {
+                sentinelResetMasterAndChangeAddress(ri, ri->unresolved_hostname, ri->addr->port);
+                reset++;
+            }
+        }
+    }
+    dictReleaseIterator(di);
+    return reset;
 }
 
 /* ============================ Config handling ============================= */
